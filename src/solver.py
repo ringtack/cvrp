@@ -1,67 +1,104 @@
-import alns
+from alns import ALNS
 from vrp_parser import VRPInstance
 import numpy as np
 import math
+import copy as cp
 
 class Solver:
-    def __init__ (self,vrp_instance : VRPInstance):
+    def __init__ (self, vrp_instance: VRPInstance):
         self.vrp_instance = vrp_instance
-        self.num_vechiles = self.vrp_instance.num_vehicles
-        self.num_customers = self.vrp_instance.num_customers
-        self.vehicle_capacity = self.vrp_instance.vehicle_capacity
-        self.customer_demand = self.vrp_instance.demandOfCustomer
-        self.customer_x = self.vrp_instance.xCoordOfCustomer
-        self.customer_y = self.vrp_instance.yCoordOfCustomer
-        self.vehicle_to_customers = {}
-        self.vehicle_to_capacity = {}
-        for i in range(self.num_vechiles):
-            self.vehicle_to_customers[i] = []
-            self.vehicle_to_capacity[i] = self.vehicle_capacity
+
+    class VRPState:
+        """
+        Solution state for CVRP. It has two data members, routes and unassigned.
+        Routes is a list of list of integers, where each inner list corresponds to
+        a single route denoting the sequence of customers to be visited. A route
+        does not contain the start and end depot. Unassigned is a list of integers,
+        each integer representing an unassigned customer.
+        """
+
+        def __init__(self,vrp_instance : VRPInstance, vehicles_to_route, num_vehicles):
+            self.vrp_instance = vrp_instance
+            self.max_num_vehicles = self.vrp_instance.num_vehicles
+            self.num_customers = self.vrp_instance.num_customers
+            self.vehicle_capacity = self.vrp_instance.vehicle_capacity
+            self.customer_demand = self.vrp_instance.demandOfCustomer
+            self.customer_x = self.vrp_instance.xCoordOfCustomer
+            self.customer_y = self.vrp_instance.yCoordOfCustomer
+
+            #what makes a solution different
+            self.num_vehicles = num_vehicles
+            self.vehicle_to_route = vehicles_to_route
+
+        def copy(self):
+            return VRPState(cp.deepcopy(self.routes), self.unassigned.copy())
+
+        def objective(self):
+            #computing the distance calculated by all vehicles
+            cost = 0
+            distance = 0
+            #completely ignore anything that goes past max_num_vehicles
+            if (self.num_vehicles > self.max_num_vehicles):
+                return float('inf')
+            
+            unserved_customers = set()
+            for i in range(self.num_customers):
+                unserved_customers.add(i)
+            for i in range(self.num_vehicles):
+                customer_list = self.vehicle_to_route[i]
+                capacity_served = 0
+                for j in range(len(customer_list)):
+                    unserved_customers.remove(j)
+                    capacity_served += self.customer_demand[j]
+                    if j == 0 == (len(customer_list) -2):
+                        distance += math.sqrt(self.customer_x[j]**2 + self.customer_y[j]**2)
+                    else:
+                        distance += math.sqrt((self.customer_x[j] - self.customer_x[j+1])**2 + (self.customer_y[j] - self.customer_y[j+1])**2)
+                #if we exceed capaity at any point also ignore it
+                if capacity_served > self.vehicle_capacity:
+                    return float('inf')
+            cost += distance
+            #if we have some customers that we are not serving
+            if len(unserved_customers) > 0:
+                return float('inf')
+            return cost
+            
+
+        @property
+        def cost(self):
+            """
+            Alias for objective method. Used for plotting.
+            """
+            return self.objective()
+
+        def find_route(self, customer):
+            """
+            Return the route that contains the passed-in customer.
+            """
+            for idx, route in self.vehicle_to_customers:
+                if customer in route:
+                    return route
+
+            raise ValueError(f"Solution does not contain customer {customer}.")
         
 
-    def construct_intial_solution(self):
-        unserved_customers = set()
-        for i in range(self.customers):
-            unserved_customers.add(i)
+    def main(self):
+        seed = np.random.int(1,1000000)
+        alns = ALNS(np.rnd.RandomState(seed))
+
+        initial_veh_to_customer, initial_num_vehicles = self.vrp_instance.construct_intial_solution()
+        initial_state = self.VRPState(self.vrp_instance, initial_veh_to_customer, initial_num_vehicles)
+
+        #add destroy and repair operators
+
+
+        stop = alns.stop.NoImprovement.NoImprovement(max_iterations= 20) #this 20 was a random choice
+        result = alns.iterate(initial_state, select, accept, stop)
+
+        return result
+
+    if __name__ == "__main__":
+    # Call the main function
+        main()
         
-        vehicle_num = 0
-        while (len(unserved_customers) > 0):
-            customer_idx = -1
-            while (customer_idx == -1):
-                x_pos = -1
-                y_pos = -1
-                #no customers visited so far
-                if len(self.vehicle_to_customers[vehicle_num][-1]):
-                    x_pos = 0
-                    y_pos = 0
-                else:
-                    last_customer_idx = self.vehicle_to_customers[vehicle_num][-1]
-                    x_pos = self.customer_x[last_customer_idx]
-                    y_pos = self.customer_y[last_customer_idx]
-                customer_idx = self.find_closest_customer(self, x_pos, y_pos, unserved_customers, self.vehicle_to_capacity[vehicle_num])
-                #if this vehicle cannot serve *any* customer it means that it has no spare capacity
-                if (customer_idx == -1):
-                    vehicle_num += 1
-            unserved_customers.remove(customer_idx)
-            self.vehicle_to_capacity[vehicle_num] -= self.customer_demand[customer_idx]
-            self.vehicle_to_customers[vehicle_num].apend(customer_idx)
-
-    def find_closest_customer(self, vehicle_x, vehicle_y, unserved_customers, capacity):
-        closest_idx = -1
-        closest_distance = float.max('inf')
-        for customer in unserved_customers:
-            distance = math.sqrt((vehicle_x - self.customer_x[customer])**2 + (vehicle_y - self.customer_x[customer])**2)
-            if self.customer_demand[customer] <= capacity and distance < closest_distance:
-                closest_distance = distance
-                closest_distance = customer
-        return closest_idx
-
-    
-    class CustomerInfo:
-
-        def __init__ (self,demand, x, y):
-            self.demand = demand
-            self.x = x
-            self.y = y
-    
-        
+            

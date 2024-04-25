@@ -18,15 +18,11 @@ def main():
     watch.start()
     instance = VRPInstance(input_file)
     solver = Solver(instance)
-    solver.generate_solution(instance)
+    solution = solver.main()
     watch.stop()
 
     sol = ""
-    for i in range(instance.numVehicles):
-        for j in range(len(solver.vehicle_locations[i])):
-            sol += str(solver.vehicle_locations[i][j].customer_idx)
-            sol += " "
-        sol += "0 "
+    #writing solution in the correct format
 
     print("{\"Instance\": \"" + file_name +
           "\", \"Time\": " + "{:.2f}".format(watch.get_time()) +
