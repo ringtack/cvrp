@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from model_timer import Timer   # You need to implement a timer module or use an existing one
 from vrp_parser import VRPInstance  # Assuming VRPInstance is defined in a separate module
-from solver import Solver  # Assuming Solver is defined in a separate module
+from solver import begin_search
 
 def main():
     if len(sys.argv) == 1:
@@ -17,8 +17,7 @@ def main():
     watch = Timer()
     watch.start()
     instance = VRPInstance(input_file)
-    solver = Solver(instance)
-    solution = solver.main()
+    res = begin_search(vrp_instance=instance)
     watch.stop()
 
     sol = ""
