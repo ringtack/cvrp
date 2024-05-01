@@ -18,7 +18,7 @@ class Timer:
             self.end_time = time.time_ns()
             self.running = False
 
-    def getElapsed(self):
+    def get_elapsed(self):
         if self.running:
             return round((time.time_ns() - self.start_time)/_NANO,4)
         else:

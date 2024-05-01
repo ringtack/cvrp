@@ -4,6 +4,7 @@ from pathlib import Path
 from model_timer import Timer   # You need to implement a timer module or use an existing one
 from vrp_parser import VRPInstance  # Assuming VRPInstance is defined in a separate module
 from solver import begin_search
+from solver import VRPState
 
 def main():
     if len(sys.argv) == 1:
@@ -17,15 +18,28 @@ def main():
     watch = Timer()
     watch.start()
     instance = VRPInstance(input_file)
-    res = begin_search(vrp_instance=instance)
+    res : VRPState = begin_search(vrp_instance=instance)
     watch.stop()
 
     sol = ""
     #writing solution in the correct format
+    for car, route in res.vehicle_to_route.items():
+        for i in range(len(route)):
+            customer = route[i]
+            if i == 0:
+                sol += "0 "
+                sol += str(customer) + " "
+            elif i == len(route) -1:
+                sol += str(customer) + " "
+                sol += "0 "
+            else:
+                sol += str(customer) + " "
+        if len(route) == 0:
+            sol += "0 0 "
 
     print("{\"Instance\": \"" + file_name +
-          "\", \"Time\": " + "{:.2f}".format(watch.get_time()) +
-          ", \"Result\": " + "{:.2f}".format(solver.objective_value) +
+          "\", \"Time\": " + "{:.2f}".format(watch.get_elapsed()) +
+          ", \"Result\": " + "{:.2f}".format(res.objective()) +
           ", \"Solution\": " + sol + "}")
 
 if __name__ == "__main__":

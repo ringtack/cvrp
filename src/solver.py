@@ -28,7 +28,8 @@ class VRPState:
         self.num_vehicles = num_vehicles
         self.vehicle_to_route = vehicles_to_route
         self.vehicle_to_capacity = vehicle_to_capacity 
-        self.unassigned_customers = set()
+        self.unassigned_customers = set()  #this is used for the destroy and repair operators
+        self.fake_vehicle_customers = set() #hold customers who cannot be added back to the routes after they were removed
 
     def copy(self):
         return VRPState(cp.deepcopy(self.routes), self.unassigned.copy())
@@ -47,6 +48,7 @@ class VRPState:
         for i in range(self.num_vehicles):
             customer_list = self.vehicle_to_route[i]
             capacity_served = 0
+            #for each route calculate the distance traveled
             for j in range(len(customer_list)):
                 curr_customer = customer_list[j]
                 unserved_customers.remove(curr_customer )
@@ -57,6 +59,8 @@ class VRPState:
                     #now that we are at this client, how costly was it to get here
                     prev_customer = customer_list[j-1]
                     distance += math.sqrt((self.customer_x[curr_customer] - self.customer_x[prev_customer ])**2 + (self.customer_y[curr_customer ] - self.customer_y[prev_customer])**2)
+            
+            #getting back to the original point (0,0)
             if len(customer_list )> 0:
                 last_customer = customer_list[-1]
                 distance += math.sqrt(self.customer_x[last_customer]**2 + self.customer_y[last_customer ]**2) #getting back to the lot
@@ -64,10 +68,9 @@ class VRPState:
             if capacity_served > self.vehicle_capacity:
                 return float('inf')
         cost += distance
-        #if we have some customers that we are not serving
-        if len(unserved_customers) > 0:
-            return float('inf')
-        print(cost)
+
+        # we don't inmediately return infinite here since we believe that routes with fewer customers in the fake vehicle are closer to the true solution
+        cost += len(self.fake_vehicle_customers) * 100000
         return cost
         
 
@@ -115,12 +118,20 @@ def two_opt_repair(state): #this is like best local repair
 def best_global_repair(state: VRPState, rnd_state, **kwargs):
     #check if there is a better place to insert the customer in
     cp_state = cp.deepcopy(state)
-    for unassigned in state.unassigned_customers:
+    cp_state.unassigned_customers.clear()
+    cp_state.fake_vehicle_customers.clear()
+    total_unassigned = set()
+    for c in state.unassigned_customers:
+        total_unassigned.add(c)
+    for c in state.fake_vehicle_customers:
+        total_unassigned.add(c)
+
+    for unassigned in total_unassigned:
         x_coord = cp_state.customer_x[unassigned]
         y_coord = cp_state.customer_y[unassigned]
-        best_cost, best_car, best_pos = float('inf'), -1, -1
+        best_cost, best_car, best_pos = float('inf'), None, None
         for car, route in state.vehicle_to_route.items(): #if this route can service the customer
-            if state.vehicle_to_capacity[car] >= state.customer_demand[unassigned]:
+            if cp_state.vehicle_to_capacity[car] >= cp_state.customer_demand[unassigned]:
                 # cost to insert a customer at a given point in the program
                 if (len(route)) == 0:
                     cost = math.sqrt((x_coord )**2 + (y_coord)**2) * 2 #times 2 because the car has to go back and forth
@@ -130,7 +141,8 @@ def best_global_repair(state: VRPState, rnd_state, **kwargs):
                         best_pos = 0
                 else:
                     for i in range(len(route)):
-                        if i==0 or i == len(route)-1:
+                        cost = None
+                        if i== 0 or i == len(route)-1:
                             #cost from this current node to either the current first or current last
                             cost = math.sqrt((x_coord - cp_state.customer_x[route[i]])**2 + (y_coord - cp_state.customer_y[route[i]])**2)
                             #now getting to the new first or getting back to the initial from first                           
@@ -144,9 +156,12 @@ def best_global_repair(state: VRPState, rnd_state, **kwargs):
                             best_cost = cost
                             best_car = car
                             best_pos = i+1
-        cp_state.unassigned_customers.remove(unassigned)
-        cp_state.vehicle_to_route[best_car].insert(best_pos, unassigned) #python insert displaces the item in that current position and pushes everything back
-        cp_state.vehicle_to_capacity[best_car] -= state.customer_demand[unassigned]
+        #it might be the case that the nodes we removed cannot be properly reinserted into the routes given the order in which we go through them, in that case we don't want to consider this a good solution
+        if best_pos == None:
+            cp_state.fake_vehicle_customers.add(unassigned)
+        else:
+            cp_state.vehicle_to_route[best_car].insert(best_pos, unassigned) #python insert displaces the item in that current position and pushes everything back
+            cp_state.vehicle_to_capacity[best_car] -= cp_state.customer_demand[unassigned]
     return cp_state
 
 #destroy operators
@@ -159,9 +174,25 @@ def two_opt_remove(state):
         #don't actually remove from route because we need to figure out which one it is in
     return cp_state
 
+def remove_largest_distance(state : VRPState, rnd_state, n_remove=1):
+    cp_state = cp.deepcopy(state)
+    for car, route in cp_state.vehicle_to_route.items():
+        longest_distance = float('-inf')
+        start,end = None, None
+        for i in range(len(route)):
+            distance = None
+            if i == 0 or i == len(route)-1:
+                distance = math.sqrt((state.customer_x[route[i]])**2 + (state.customer_y[route[i]])**2) 
+            else:
+                distance = math.sqrt((cp_state.customer_x[route[i]] - cp_state.customer_x[route[i+1]])**2 + (cp_state.customer_y[route[i]] - cp_state.customer_y[route[i+1]])**2)
+        if distance > longest_distance:
+            longest_distance = distance
+            start = i
+            end = i+1
+    return cp_state
+
 def random_removal(state : VRPState, rnd_state, n_remove=1):
     cp_state = cp.deepcopy(state)
-    print(state.vehicle_to_route)
     for car, route in cp_state.vehicle_to_route.items():
         if len(route) == 0:
             continue
@@ -172,8 +203,9 @@ def random_removal(state : VRPState, rnd_state, n_remove=1):
         rnd_state.choice(len(route), n_remove, replace=False)
         to_remove_idx = np.random.randint(0, len(route))
         removed_customer = route[to_remove_idx]
-        cp_state.unassigned_customers.add(removed_customer )
+        cp_state.unassigned_customers.add(removed_customer)
         route.remove(removed_customer)
+        #update capacity for the vehicles whose customers have been removed
         cp_state.vehicle_to_capacity[car] += cp_state.customer_demand[removed_customer]
     return cp_state
 
@@ -181,10 +213,11 @@ def begin_search(vrp_instance):
     seed = np.random.randint(1,1000000)
     alns = ALNS(np.random.RandomState(seed))
 
-    initial_veh_to_customer, initial_num_vehicles, vehicle_to_capacity = vrp_instance.construct_intial_solution()
+    initial_veh_to_customer, initial_num_vehicles, vehicle_to_capacity, unassigned = vrp_instance.construct_intial_solution()
     initial_state = VRPState(vrp_instance, initial_veh_to_customer, initial_num_vehicles,vehicle_to_capacity )
     #the initial solution might not have used up all cars
     initial_state.num_vehicles = len(initial_state.vehicle_to_route)
+    initial_state.fake_vehicle_customers = unassigned
     
     #add destroy and repair operators
     alns.add_destroy_operator(random_removal)
@@ -196,17 +229,14 @@ def begin_search(vrp_instance):
     #initial temperatures can be autofitted such that the frist solution has a 50% chance of being acceted?
     start_temperature = 0
     end_temperature = 1
-    max_iterations = 5000
+    max_iterations = 10000
     # op_coupling = [True, False ; False, True] 
     select = RouletteWheel([25, 5, 1, 0], 0.8, 1, 1)
-    accept = SimulatedAnnealing.autofit(initial_state.objective(), 0.05, 0.90, max_iterations)
-    print("initially")
-    print(initial_state.objective())
-    stop = NoImprovement(max_iterations= 20) #this 20 was a random choice
-    print("started")
+    accept = SimulatedAnnealing.autofit(initial_state.objective(), 0.05, 0.50, max_iterations)
+    stop = NoImprovement(max_iterations= 500) #this 20 was a random choice
     result = alns.iterate(initial_state, select, accept, stop)
 
-    return result
+    return result.best_state
 
     
             
