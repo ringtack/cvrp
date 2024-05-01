@@ -12,4 +12,5 @@ fi
 	
 input=$1
 
-java -cp src solver.ls.Main $input
+# run the solver
+python3.9 src/main.py $input

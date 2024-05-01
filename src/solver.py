@@ -80,6 +80,16 @@ class Solver:
                     return route
 
             raise ValueError(f"Solution does not contain customer {customer}.")
+
+        #repair operators
+        def two_opt_repair(self, state, vehicle_idx,customer_idx):
+            cp_state = cp.deepcopy(state)
+
+
+
+        #destroy operators
+        def two_opt_remove(self, state):
+            
         
 
     def main(self):
@@ -88,10 +98,15 @@ class Solver:
 
         initial_veh_to_customer, initial_num_vehicles = self.vrp_instance.construct_intial_solution()
         initial_state = self.VRPState(self.vrp_instance, initial_veh_to_customer, initial_num_vehicles)
+        #the initial solution might not have used up all cars
+        initial_state.num_vehicles = len(initial_state.vehicle_to_route)
 
         #add destroy and repair operators
 
-
+        select = None
+        start_temperature = 0
+        end_temperature = 0
+        accept = alns.accept.SimulatedAnnealing.SimulatedAnnealing(start_temperature, end_temperature, step =0.5, method ='exponential')
         stop = alns.stop.NoImprovement.NoImprovement(max_iterations= 20) #this 20 was a random choice
         result = alns.iterate(initial_state, select, accept, stop)
 

@@ -1,7 +1,7 @@
 import sys
 import os
 from pathlib import Path
-from timer import Timer  # You need to implement a timer module or use an existing one
+from model_timer import Timer   # You need to implement a timer module or use an existing one
 from vrp_parser import VRPInstance  # Assuming VRPInstance is defined in a separate module
 from solver import Solver  # Assuming Solver is defined in a separate module
 

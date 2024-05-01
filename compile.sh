@@ -5,4 +5,6 @@
 ########################################
 
 # Update this file with instructions on how to compile your code
-javac ./src/solver/ls/*.java
+
+source cvrp/bin/activate
+pip3 install -r requirements.txt
