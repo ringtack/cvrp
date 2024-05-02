@@ -7,6 +7,9 @@ from alns import ALNS
 from alns.accept import SimulatedAnnealing
 from alns.stop import NoImprovement
 from alns.select import RouletteWheel
+from alns.select import OperatorSelectionScheme
+
+from itertools import permutations
 
 class VRPState:
     """
@@ -28,8 +31,9 @@ class VRPState:
         self.num_vehicles = num_vehicles
         self.vehicle_to_route = vehicles_to_route
         self.vehicle_to_capacity = vehicle_to_capacity 
-        self.unassigned_customers = set()  #this is used for the destroy and repair operators
         self.fake_vehicle_customers = set() #hold customers who cannot be added back to the routes after they were removed
+        self.unassigned_customers = set()  #this is used for global destroy and repair operators
+        self.removed_customers = {} #used for local operatores, where you still want to keep them in the same route
 
     def copy(self):
         return VRPState(cp.deepcopy(self.routes), self.unassigned.copy())
@@ -92,28 +96,34 @@ class VRPState:
         raise ValueError(f"Solution does not contain customer {customer}.")
 
 
-def two_opt_repair(state): #this is like best local repair
-    cp_state = cp.deepcoppy(state)
-    for unassigned in state.unassigned_customers:
-        x_coord = cp_state.customer_x[unassigned]
-        y_coord = cp_state.customer_y[unassigned]
-        best_cost, best_pos = float('inf'), -1
-        route = state.find_route(unassigned)
-        for i in range(len(route)):
-            if i==0 or i == len(route)-1:
-                cost = math.sqrt((x_coord - cp_state.customer_x[route[i]])**2 + (y_coord - cp_state.customer_y[route[i]])**2)
-            else:
-                #from the current node to this new one
-                cost = math.sqrt((x_coord - cp_state.customer_x[route[i]])**2 + (y_coord - cp_state.customer_y[route[i]])**2)
-                #from the new one back to the +1 that it was connected to
-                cost = math.sqrt((x_coord - cp_state.customer_x[route[i+1]])**2 + (y_coord - cp_state.customer_y[route[i+1]])**2)
-            if cost < best_cost:
-                best_cost = cost
-                best_route = route
-                best_pos = i+1
-        cp_state.unassigned.remove(unassigned)
-        cp_state.vehicle_to_route[best_route].insert(best_pos) #python insert displaces the item in that current position and pushes everything back
-        cp_state.vehicle_to_capacity[best_route] -= state.customer_demand[unassigned]
+def two_opt_repair(state: VRPState, rnd_state, **kwargs): #this is like best local repair
+    cp_state = cp.deepcopy(state)
+    to_insert = cp.deepcopy(cp_state.removed_customers)
+    cp_state.removed_customers.clear()
+    for car, customers in to_insert.items():
+        start = customers[0]
+        end = customers[1]
+        cp_state.vehicle_to_route[car][start:end] = cp_state.vehicle_to_route[car][start:end][::-1] 
+    return cp_state
+
+    
+
+def find_cost(state, route):
+    distance = 0
+    for j in range(len(route)):
+        curr_customer = route[j]
+        if j == 0 :
+            distance += math.sqrt(state.customer_x[curr_customer]**2 + state.customer_y[curr_customer ]**2)
+        else:
+            #now that we are at this client, how costly was it to get here
+            prev_customer = route[j-1]
+            distance += math.sqrt((state.customer_x[curr_customer] - state.customer_x[prev_customer ])**2 + (state.customer_y[curr_customer ] - state.customer_y[prev_customer])**2)
+        #getting back to the original point (0,0)
+        if len(route)> 0:
+            last_customer = route[-1]
+            distance += math.sqrt(state.customer_x[last_customer]**2 + state.customer_y[last_customer ]**2) #getting back to the lot
+        return distance
+            
 
 def best_global_repair(state: VRPState, rnd_state, **kwargs):
     #check if there is a better place to insert the customer in
@@ -165,30 +175,17 @@ def best_global_repair(state: VRPState, rnd_state, **kwargs):
     return cp_state
 
 #destroy operators
-def two_opt_remove(state):
+def two_opt_remove(state : VRPState, rnd_state, ):
+    #remove two random edges and try best insertion back
     cp_state = cp.deepcopy(state)
-    for route in cp_state:
-        to_remove_idx = np.random.randint(0, len(route))
-        removed_customer = route[to_remove_idx]
-        cp_state.unassigned_customers.add(removed_customer)
-        #don't actually remove from route because we need to figure out which one it is in
-    return cp_state
-
-def remove_largest_distance(state : VRPState, rnd_state, n_remove=1):
-    cp_state = cp.deepcopy(state)
-    for car, route in cp_state.vehicle_to_route.items():
-        longest_distance = float('-inf')
-        start,end = None, None
-        for i in range(len(route)):
-            distance = None
-            if i == 0 or i == len(route)-1:
-                distance = math.sqrt((state.customer_x[route[i]])**2 + (state.customer_y[route[i]])**2) 
-            else:
-                distance = math.sqrt((cp_state.customer_x[route[i]] - cp_state.customer_x[route[i+1]])**2 + (cp_state.customer_y[route[i]] - cp_state.customer_y[route[i+1]])**2)
-        if distance > longest_distance:
-            longest_distance = distance
-            start = i
-            end = i+1
+    cp_state.removed_customers.clear()
+    for car,route in state.vehicle_to_route.items():
+        if (len(route) <= 2):
+            continue
+        length = rnd_state.choice(np.arange(0, len(route)-1, 1), 1, replace=False)[0]
+        start = rnd_state.choice(np.arange(0, len(route) - length), 1, replace=False)[0]
+        end = start + length
+        cp_state.removed_customers[car] = [start,end]
     return cp_state
 
 def random_removal(state : VRPState, rnd_state, n_remove=1):
@@ -200,13 +197,15 @@ def random_removal(state : VRPState, rnd_state, n_remove=1):
             n_remove = 1
         else:
             n_remove = 2
-        rnd_state.choice(len(route), n_remove, replace=False)
-        to_remove_idx = np.random.randint(0, len(route))
-        removed_customer = route[to_remove_idx]
-        cp_state.unassigned_customers.add(removed_customer)
-        route.remove(removed_customer)
-        #update capacity for the vehicles whose customers have been removed
-        cp_state.vehicle_to_capacity[car] += cp_state.customer_demand[removed_customer]
+        to_remove = rnd_state.choice(len(route), n_remove, replace=False)
+        to_remove_customers = []
+        for el in to_remove:
+            to_remove_customers.append(route[el])
+        for removed_customer in to_remove_customers:
+            cp_state.unassigned_customers.add(removed_customer)
+            route.remove(removed_customer)
+            #update capacity for the vehicles whose customers have been removed
+            cp_state.vehicle_to_capacity[car] += cp_state.customer_demand[removed_customer]
     return cp_state
 
 def begin_search(vrp_instance):
@@ -220,20 +219,25 @@ def begin_search(vrp_instance):
     initial_state.fake_vehicle_customers = unassigned
     
     #add destroy and repair operators
+    destroy_num = 2
+    repair_num = 2
     alns.add_destroy_operator(random_removal)
-    # alns.add_destroy_operator(self.two_opt_remove)
+    alns.add_destroy_operator(two_opt_remove)
     alns.add_repair_operator(best_global_repair)
-    # alns.add_repair_operator(self.two_opt_repair)
+    alns.add_repair_operator(two_opt_repair)
     
 
     #initial temperatures can be autofitted such that the frist solution has a 50% chance of being acceted?
-    start_temperature = 0
-    end_temperature = 1
-    max_iterations = 10000
-    # op_coupling = [True, False ; False, True] 
-    select = RouletteWheel([25, 5, 1, 0], 0.8, 1, 1)
-    accept = SimulatedAnnealing.autofit(initial_state.objective(), 0.05, 0.50, max_iterations)
-    stop = NoImprovement(max_iterations= 500) #this 20 was a random choice
+    max_iterations = 5000
+    op_coupling = np.zeros((destroy_num, repair_num))
+    op_coupling[0][0] = True
+    op_coupling[0][1] = False 
+    op_coupling[1][0] = False
+    op_coupling[1][1] = True
+    select = RouletteWheel([25, 15, 5, 0], 0.5, destroy_num, repair_num, op_coupling)
+    # select = OperatorSelectionScheme(destroy_num, repair_num,op_coupling)
+    accept = SimulatedAnnealing.autofit(initial_state.objective(), 0.05, 0.80, max_iterations)
+    stop = NoImprovement(max_iterations= 100) #this 20 was a random choice
     result = alns.iterate(initial_state, select, accept, stop)
 
     return result.best_state
