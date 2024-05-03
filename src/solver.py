@@ -103,6 +103,7 @@ class VRPState:
 
 
 #this is basically changing two edges by taking some middle chunk and flipping it so that the conenctin parts are diff
+#has NO effect on capacity
 def switch_repair(state: VRPState, rnd_state, **kwargs): #this is like best local repair
     cp_state = cp.deepcopy(state)
     to_insert = cp.deepcopy(cp_state.removed_customers)
@@ -149,6 +150,12 @@ def find_cost(state : VRPState, route):
             distance += math.sqrt(state.customer_x[last_customer]**2 + state.customer_y[last_customer ]**2) #getting back to the lot
     return distance
 
+def find_total_demand(state : VRPState, route):
+    total_demand = 0
+    for c in route:
+        total_demand += state.customer_demand[c]
+    return total_demand
+
 #this is for blocks of customers (a segment)
 def switch_across_routes(state : VRPState, rnd_state, **kwargs): #switches segments across routes
     cp_state = cp.deepcopy(state)
@@ -192,6 +199,11 @@ def insert_across_routes(state: VRPState, rnd_state, **kwargs):
         #swtich between routes by changing the beginnings (this always get adversely not selected so there might be something wrong idk)
         cp_state.vehicle_to_route[veh1] = segment_pair[1] + cp_state.vehicle_to_route[veh1]
         cp_state.vehicle_to_route[veh2] = segment_pair[0] + cp_state.vehicle_to_route[veh2]
+        #updating capacity
+        segment1_demand = find_total_demand(state, segment_pair[0])
+        segment2_demand = find_total_demand(state, segment_pair[1])
+        cp_state.vehicle_to_capacity[veh1] += (segment2_demand - segment1_demand)
+        cp_state.vehicle_to_capacity[veh2] += (segment1_demand - segment2_demand)
         for s in segment_pair_idx:
             segments.pop(s)
     return cp_state
@@ -261,11 +273,13 @@ def best_global_repair(state: VRPState, rnd_state, **kwargs):
     for c in state.fake_vehicle_customers:
         total_unassigned.add(c)
 
+    depot_x = state.customer_x[0]
+    depot_y = state.customer_y[0]
+
     for unassigned in total_unassigned:
         x_coord = cp_state.customer_x[unassigned]
         y_coord = cp_state.customer_y[unassigned]
-        depot_x = state.customer_x[0]
-        depot_y = state.customer_y[0]
+        
         best_cost, best_car, best_pos = float('inf'), None, None
         for car, route in state.vehicle_to_route.items(): #if this route can service the customer
             if cp_state.vehicle_to_capacity[car] >= cp_state.customer_demand[unassigned]:
