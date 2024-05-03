@@ -72,7 +72,7 @@ class VRPInstance:
                     vehicle_num += 1
             
                     #we have already greedily used up the capacity in each vehicle then the rest cannot be fulfilled
-                    if vehicle_num == self.num_vehicles -1:
+                    if vehicle_num == self.num_vehicles:
                             for c in unserved_customers:
                                 unassigned.add(c)
                             return vehicle_to_customers, self.num_vehicles,vehicle_to_capacity, unassigned

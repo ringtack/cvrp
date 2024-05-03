@@ -21,6 +21,7 @@ def main():
     res : VRPState = begin_search(vrp_instance=instance)
     watch.stop()
 
+    
     sol = ""
     #writing solution in the correct format
     for car, route in res.vehicle_to_route.items():
@@ -41,6 +42,29 @@ def main():
           "\", \"Time\": " + "{:.2f}".format(watch.get_elapsed()) +
           ", \"Result\": " + "{:.2f}".format(res.objective()) +
           ", \"Solution\": " + sol + "}")
+    
+    new_file_name = file_name + ".sol"
+    if os.path.exists(new_file_name):
+        os.remove(new_file_name)
+    with open(file_name + ".sol", "w") as file:
+        file.write("{:.2f}".format(res.objective()))
+        file.write("\n")
+        for car, route in res.vehicle_to_route.items():
+            sol = ""
+            for i in range(len(route)):
+                customer = route[i]
+                if i == 0:
+                    sol += "0 "
+                    sol += str(customer) + " "
+                elif i == len(route) -1:
+                    sol += str(customer) + " "
+                    sol += "0 "
+                else:
+                    sol += str(customer) + " "
+            if len(route) == 0:
+                sol+= "0 0"
+            sol += "\n"
+            file.write(sol)
 
 if __name__ == "__main__":
     main()
