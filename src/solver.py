@@ -107,7 +107,7 @@ def switch_repair(state: VRPState, rnd_state, **kwargs): #this is like best loca
     cp_state = cp.deepcopy(state)
     to_insert = cp.deepcopy(cp_state.removed_customers)
     cp_state.removed_customers.clear()
-    cp_state.fake_vehicle_customers.clear()
+    cp_state.unassigned_customers.clear()
     for car, customers in to_insert.items():
         start = customers[0]
         end = customers[1]
@@ -303,16 +303,12 @@ def best_global_repair(state: VRPState, rnd_state, **kwargs):
 
 def reorder_everything(state : VRPState, rnd_state, **kwargs):
     cp_state = cp.deepcopy(state)
-    cp_state.unassigned_customers.clear()
-    cp_state.fake_vehicle_customers.clear()
     for car, route in state.vehicle_to_route.items():
         cp_state.vehicle_to_route[car] = set(route)
     return cp_state
 
 def greedy_each(state: VRPState, rnd_state, **kwargs):
     cp_state = cp.deepcopy(state)
-    cp_state.unassigned_customers.clear()
-    cp_state.fake_vehicle_customers.clear()
 
     def find_closest_customer(car_x, car_y, customers):
         closest_customer = None
