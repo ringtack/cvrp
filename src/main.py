@@ -62,9 +62,10 @@ def main():
                 else:
                     sol += str(customer) + " "
             if len(route) == 0:
-                sol+= "0 0"
+                sol+= "0"
             sol += "\n"
             file.write(sol)
+    print("here")
 
 if __name__ == "__main__":
     main()

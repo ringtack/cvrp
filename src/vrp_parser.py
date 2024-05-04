@@ -38,13 +38,12 @@ class VRPInstance:
         for i in range(1,self.num_customers):
             unserved_customers.add(i)
 
-        def find_feasible_customer(self,  unserved_customers, capacity):
-            res_customer = None
-            # closest_distance = float('inf')
-            for customer in unserved_customers:
-                if self.demandOfCustomer[customer] <= capacity :
-                    res_customer = customer
-            return res_customer
+        def find_feasible_customer(self,  unserved_customers, ordered_customers, capacity):
+            for customer in ordered_customers:
+                if customer in unserved_customers:
+                    if self.demandOfCustomer[customer] <= capacity :
+                        return customer
+            return None
       
         vehicle_num = 0
         vehicle_to_capacity = {}
@@ -53,7 +52,11 @@ class VRPInstance:
         for v in range(self.num_vehicles):
             vehicle_to_capacity[v] = self.vehicle_capacity
             vehicle_to_customers[v] = []
-
+        sorted_unassigned = []
+        for c in unserved_customers:
+            sorted_unassigned.append(c)
+        sorted_unassigned.sort()
+        sorted_unassigned.reverse()
         while (len(unserved_customers) > 0):
             customer_idx = None
             while (customer_idx == None):
@@ -67,19 +70,19 @@ class VRPInstance:
                 #     last_customer_idx = vehicle_to_customers[vehicle_num][-1]
                 #     x_pos = self.xCoordOfCustomer[last_customer_idx]
                 #     y_pos = self.yCoordOfCustomer[last_customer_idx]
-                customer_idx = find_feasible_customer(self,  unserved_customers, vehicle_to_capacity[vehicle_num])
+                customer_idx = find_feasible_customer(self,  unserved_customers, sorted_unassigned, vehicle_to_capacity[vehicle_num])
                 if (customer_idx == None):
                     vehicle_num += 1
-            
                     #we have already greedily used up the capacity in each vehicle then the rest cannot be fulfilled
                     if vehicle_num == self.num_vehicles:
-                            for c in unserved_customers:
-                                unassigned.add(c)
-                            return vehicle_to_customers, self.num_vehicles,vehicle_to_capacity, unassigned
-                
-            unserved_customers.remove(customer_idx)
-            vehicle_to_capacity[vehicle_num] -= self.demandOfCustomer[customer_idx]
-            vehicle_to_customers[vehicle_num].append(customer_idx)
+                        for c in unserved_customers:
+                            unassigned.add(c)
+                        return vehicle_to_customers, self.num_vehicles,vehicle_to_capacity, unassigned 
+                else:
+                    unserved_customers.remove(customer_idx)
+                    vehicle_to_capacity[vehicle_num]
+                    vehicle_to_capacity[vehicle_num] -= self.demandOfCustomer[customer_idx]
+                    vehicle_to_customers[vehicle_num].append(customer_idx)
         return vehicle_to_customers, self.num_vehicles,vehicle_to_capacity, unassigned
 
 

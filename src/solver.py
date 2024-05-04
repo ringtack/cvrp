@@ -3,6 +3,7 @@ import numpy as np
 import math
 import copy as cp
 from collections import defaultdict
+import matplotlib.pyplot as plt
 
 
 from alns import ALNS
@@ -37,6 +38,7 @@ class VRPState:
         self.fake_vehicle_customers = set() #hold customers who cannot be added back to the routes after they were removed
         self.unassigned_customers = [] #this is used for global destroy and repair operators
         self.removed_customers = {} #used for local operatores, where you still want to keep them in the same route
+        self.customers_distances = None
 
     def copy(self):
         pass
@@ -81,6 +83,7 @@ class VRPState:
 
         # we don't inmediately return infinite here since we believe that routes with fewer customers in the fake vehicle are closer to the true solution
         cost += len(self.fake_vehicle_customers) * 100000
+        # print(cost)
         return cost
         
 
@@ -97,169 +100,116 @@ class VRPState:
         """
         for idx, route in self.vehicle_to_route.items():
             if customer in route:
-                return route
+                return idx, route
 
         raise ValueError(f"Solution does not contain customer {customer}.")
 
+def get_distance_between(state, c1, c2):
+    return math.sqrt((state.customer_x[c1] - state.customer_x[c2])**2 + (state.customer_y[c1] - state.customer_y[c2])**2) #getting back to the lot
 
-#this is basically changing two edges by taking some middle chunk and flipping it so that the conenctin parts are diff
-#has NO effect on capacity
-def switch_repair(state: VRPState, rnd_state, **kwargs): #this is like best local repair
-    cp_state = cp.deepcopy(state)
-    to_insert = cp.deepcopy(cp_state.removed_customers)
-    cp_state.removed_customers.clear()
-    cp_state.unassigned_customers.clear()
-    for car, customers in to_insert.items():
-        start = customers[0]
-        end = customers[1]
-        cp_state.vehicle_to_route[car][start:end] = cp_state.vehicle_to_route[car][start:end][::-1] 
-
-    return cp_state
-
-def switch_remove(state : VRPState, rnd_state, **kwargs):#this switch is within one route
+def two_opt_destroy(state : VRPState, rnd_state, **kwargs):#this switch is within one route
     #remove two random edges and try best insertion back
     cp_state = cp.deepcopy(state)
     cp_state.unassigned_customers.clear()
     cp_state.removed_customers.clear()
-    for car,route in state.vehicle_to_route.items():
-        if (len(route) <= 2):
-            continue
-        length = rnd_state.choice(np.arange(0, len(route)), 1, replace=False)[0]
-        
-        start = rnd_state.choice(np.arange(0, len(route) - length), 1, replace=False)[0]
-        end = start + length
-        cp_state.removed_customers[car] = [start,end]
+    # for car,route in state.vehicle_to_route.items(): only do it for one
+    route_idx = rnd_state.choice(len(state.vehicle_to_route.values()), 1, replace=False)[0]
+    route = state.vehicle_to_route[route_idx]
+    if (len(route) <= 3):
+        return cp_state
+    length = rnd_state.choice(np.arange(0, len(route)), 1, replace=False)[0]
+    start = rnd_state.choice(np.arange(0, len(route) - length), 1, replace=False)[0]
+    end = start + length
+    cp_state.removed_customers[route_idx] = [start,end]
+    return cp_state
+
+#this is basically changing two edges by taking some middle chunk and flipping it so that the conenctin parts are diff
+def two_opt_repair(state: VRPState, rnd_state, **kwargs): #this is like best local repair
+    cp_state = cp.deepcopy(state)
+    to_insert = cp.deepcopy(cp_state.removed_customers)
+    cp_state.removed_customers.clear()
+    cp_state.unassigned_customers.clear()
+    for car, customers in to_insert.items(): #this loop basically only happens once
+        start = customers[0]
+        end = customers[1]
+        cp_state.vehicle_to_route[car][start:end] = cp_state.vehicle_to_route[car][start:end][::-1] 
     return cp_state
  
-#helper for the above function 
-def find_cost(state : VRPState, route):
-    distance = 0
-    depot_x = state.customer_x[0]
-    depot_y = state.customer_y[0]
-    for j in range(len(route)):
-        curr_customer = route[j]
-        if j == 0 :
-            distance += math.sqrt((state.customer_x[curr_customer] - depot_x)**2 + (state.customer_y[curr_customer]-depot_y)**2)
-        else:
-            #now that we are at this client, how costly was it to get here
-            prev_customer = route[j-1]
-            distance += math.sqrt((state.customer_x[curr_customer] - state.customer_x[prev_customer ])**2 + (state.customer_y[curr_customer ] - state.customer_y[prev_customer])**2)
-        #getting back to the original point (0,0)
-        if len(route)> 0:
-            last_customer = route[-1]
-            distance += math.sqrt(state.customer_x[last_customer]**2 + state.customer_y[last_customer ]**2) #getting back to the lot
-    return distance
-
-def find_total_demand(state : VRPState, route):
-    total_demand = 0
-    for c in route:
-        total_demand += state.customer_demand[c]
-    return total_demand
-
-#this is for blocks of customers (a segment)
+#this is for blocks of customers (a segment) to a close neighboring cluster
 def switch_across_routes(state : VRPState, rnd_state, **kwargs): #switches segments across routes
     cp_state = cp.deepcopy(state)
-    num_destroy = max(2, len(state.vehicle_to_route)//2)
-    if num_destroy % 2 != 0:
-        num_destroy += 1
-    to_destroy = list(rnd_state.choice(len(state.vehicle_to_route)-1, num_destroy, replace = False))
+    route_idx = list(rnd_state.choice(len(state.vehicle_to_route), 1, replace = False))[0]
     cp_state.unassigned_customers.clear()
     cp_state.removed_customers.clear()
-    valid = True
-    for car in to_destroy:
-        if len(state.vehicle_to_route[car]) < 2:
-            valid = False
-    if not valid:
+    route = state.vehicle_to_route[route_idx]
+    if len(route) < 2:
         return cp_state
-    
-    while (len(to_destroy) > 0):
-        r = rnd_state.choice(to_destroy, 1, replace = False)[0]  
-        route = cp_state.vehicle_to_route[r]
-        r_length = len(cp_state.vehicle_to_route[r])
-        # if r_length < 2:
-        #     to_destroy.remove(r)
-        #     continue
-        start = rnd_state.choice(np.arange(1,r_length), 1, replace = False)[0]
-        to_remove = route[:start]
-        cp_state.removed_customers[r] = to_remove
-        to_destroy.remove(r)
-        cp_state.vehicle_to_route[r] = route[start:]
+    to_swap = rnd_state.choice(route,1,replace=False)[0]
+    to_swap_idx = route.index(to_swap)
+
+    sorted_distances_indices = np.argsort(state.customers_distances[to_swap])
+    idx = 0
+    closest = sorted_distances_indices[idx]
+    while (closest in state.fake_vehicle_customers or cp_state.find_route(closest)[0] == route_idx):
+        idx += 1
+        closest = sorted_distances_indices[idx]
+    if closest in state.fake_vehicle_customers:
+        return cp_state
+    alt_route_idx, alt_route = state.find_route(closest)
+    closest_idx = alt_route.index(closest)
+    length = rnd_state.choice(len(route) - to_swap_idx, 1, replace=False)[0]
+    segment_length = min(len(alt_route) - closest_idx, length)
+    cp_state.removed_customers[route_idx] =   (to_swap_idx, alt_route[closest_idx:closest_idx + segment_length])
+    cp_state.removed_customers[alt_route_idx] = (closest_idx , route[to_swap_idx:to_swap_idx + segment_length])
+
+    cp_state.vehicle_to_capacity[route_idx] += find_demand(state, route[to_swap_idx:to_swap_idx + segment_length])
+    cp_state.vehicle_to_capacity[alt_route_idx] += find_demand(state, alt_route[closest_idx:closest_idx + segment_length])
+
+    cp_state.vehicle_to_route[route_idx] = route[:to_swap_idx] + route[to_swap_idx + segment_length:]
+    cp_state.vehicle_to_route[alt_route_idx] = alt_route[:closest_idx] + alt_route[closest_idx + segment_length:]
     return cp_state
+
 
 def insert_across_routes(state: VRPState, rnd_state, **kwargs):
     cp_state = cp.deepcopy(state)
     segments = cp.deepcopy(state.removed_customers)
     cp_state.unassigned_customers.clear()
     cp_state.removed_customers.clear()
-    while len(segments) > 0:
-        segment_pair_idx = rnd_state.choice(list(segments.keys()), 2, replace = False)
-        veh1 = segment_pair_idx[0]
-        veh2 = segment_pair_idx[1]
-        segment_pair = [segments[veh1], segments[veh2]]
-        #swtich between routes by changing the beginnings (this always get adversely not selected so there might be something wrong idk)
-        cp_state.vehicle_to_route[veh1] = segment_pair[1] + cp_state.vehicle_to_route[veh1]
-        cp_state.vehicle_to_route[veh2] = segment_pair[0] + cp_state.vehicle_to_route[veh2]
-        #updating capacity
-        segment1_demand = find_total_demand(state, segment_pair[0])
-        segment2_demand = find_total_demand(state, segment_pair[1])
-        cp_state.vehicle_to_capacity[veh1] += (segment2_demand - segment1_demand)
-        cp_state.vehicle_to_capacity[veh2] += (segment1_demand - segment2_demand)
-        for s in segment_pair_idx:
-            segments.pop(s)
+    for veh, pair in segments.items():
+        route = state.vehicle_to_route[veh]
+        cp_state.vehicle_to_route[veh] = route[:pair[0]] + pair[1] + route[pair[0]:]
+        cp_state.vehicle_to_capacity[veh] -= find_demand(state, pair[1])
     return cp_state
 
-def remove_furthest_out(state : VRPState, rnd_state, **kwargs):
-    cp_state = cp.deepcopy(state)
-    cp_state.unassigned_customers.clear()
-    cp_state.removed_customers.clear()
-
-    def find_farthest_customer(state : VRPState,customers):
-        farthest_customer = None
-        farthest_dist = float('-inf')
-        #skipping the first one, initial cost of getting out there
-        x = state.customer_x[customers[0]]
-        y = state.customer_y[customers[0]]
-        for i in range(1, len(customers)):
-            c = customers[i]
-            dist = math.sqrt((state.customer_x[c] - x) ** 2 + (state.customer_y[c]- y)**2)
-            if dist > farthest_dist:
-                farthest_dist = dist
-                farthest_customer = c
-            x = state.customer_x[c]
-            y = state.customer_y[c]
-        #if the start and end are too far apart (going and getting back gets too expensive)
-        if math.sqrt((state.customer_x[customers[0]] - state.customer_x[len(customers)-1]) ** 2 + (state.customer_y[customers[0]]- state.customer_x[len(customers)-1])**2) > farthest_dist:
-            return customers[len(customers)-1]
-        return farthest_customer
-    for c,r in state.vehicle_to_route.items():
-        if len(r) < 2:
-            continue
-        farthest = find_farthest_customer(state, r)
-        cp_state.unassigned_customers.append(farthest)
-        cp_state.vehicle_to_route[c].remove(farthest)
-    return cp_state
+def find_demand(state:VRPState,route):
+    d= 0
+    for c in route:
+        d += state.customer_demand[c]
+    return d
 
 
 def random_removal(state : VRPState, rnd_state, n_remove=1):
     cp_state = cp.deepcopy(state)
     cp_state.unassigned_customers.clear()
     cp_state.removed_customers.clear()
-    for car, route in cp_state.vehicle_to_route.items():
-        if len(route) == 0:
-            continue
-        if len(route) < 2:
-            n_remove = 1
-        else:
-            n_remove = 2
-        to_remove = rnd_state.choice(len(route), n_remove, replace=False)
-        to_remove_customers = []
-        for el in to_remove:
-            to_remove_customers.append(route[el])
-        for removed_customer in to_remove_customers:
-            cp_state.unassigned_customers.append(removed_customer)
-            route.remove(removed_customer)
-            #update capacity for the vehicles whose customers have been removed
-            cp_state.vehicle_to_capacity[car] += cp_state.customer_demand[removed_customer]
+    # for car, route in cp_state.vehicle_to_route.items():
+    route_idx = rnd_state.choice(len(state.vehicle_to_route), 1, replace=False)[0]
+    route = cp_state.vehicle_to_route[route_idx]
+    if len(route) == 0:
+        return cp_state
+    if len(route) < 2:
+        n_remove = 1
+    else:
+        n_remove = 2
+    to_remove = rnd_state.choice(len(route), n_remove, replace=False)
+    to_remove_customers = []
+    for el in to_remove:
+        to_remove_customers.append(route[el])
+    for removed_customer in to_remove_customers:
+        cp_state.unassigned_customers.append(removed_customer)
+        route.remove(removed_customer)
+        #update capacity for the vehicles whose customers have been removed
+        cp_state.vehicle_to_capacity[route_idx] += cp_state.customer_demand[removed_customer]
     return cp_state
 
 def best_global_repair(state: VRPState, rnd_state, **kwargs):
@@ -272,134 +222,252 @@ def best_global_repair(state: VRPState, rnd_state, **kwargs):
         total_unassigned.add(c)
     for c in state.fake_vehicle_customers:
         total_unassigned.add(c)
-
-    depot_x = state.customer_x[0]
-    depot_y = state.customer_y[0]
-
     for unassigned in total_unassigned:
-        x_coord = cp_state.customer_x[unassigned]
-        y_coord = cp_state.customer_y[unassigned]
-        
+        depot_idx = 0
         best_cost, best_car, best_pos = float('inf'), None, None
-        for car, route in state.vehicle_to_route.items(): #if this route can service the customer
+        costs = []        
+        cars = []
+        positions = []
+        for car, route in state.vehicle_to_route.items(): 
+            #if this route can service the customer
             if cp_state.vehicle_to_capacity[car] >= cp_state.customer_demand[unassigned]:
                 # cost to insert a customer at a given point in the program
+                cost = None
                 if (len(route)) == 0:
-                    cost = math.sqrt((x_coord - depot_x)**2 + (y_coord - depot_y)**2) * 2 #times 2 because the car has to go back and forth
+                    cost = get_distance_between(state, unassigned, depot_idx) * 2
                     if cost < best_cost:
                         best_cost = cost
                         best_car = car
                         best_pos = 0
                 else:
                     for i in range(len(route)):
-                        cost = 0
+                        cost = get_distance_between(state, unassigned, route[i])
                         if i == 0 or i == len(route)-1:
-                            #cost from this current node to either the current first or current last
-                            cost = math.sqrt((x_coord - cp_state.customer_x[route[i]])**2 + (y_coord - cp_state.customer_y[route[i]])**2)
                             #now getting to the new first or getting back to the initial from first                           
-                            cost +=  math.sqrt((x_coord - depot_x)**2 + (y_coord - depot_y)**2) 
+                            cost += get_distance_between(state, unassigned, depot_idx) 
                         else:
-                            #from the current node to this new one
-                            cost = math.sqrt((x_coord - cp_state.customer_x[route[i]])**2 + (y_coord - cp_state.customer_y[route[i]])**2)
                             #from the new one back to the +1 that it was connected to
-                            cost += math.sqrt((x_coord - cp_state.customer_x[route[i+1]])**2 + (y_coord - cp_state.customer_y[route[i+1]])**2)
+                            cost += get_distance_between(state, unassigned, route[i+1])
                         if cost < best_cost:
                             best_cost = cost
                             best_car = car
                             best_pos = i+1
+                costs.append(cost)
+                cars.append(car)
+                positions.append(best_pos)
         #it might be the case that the nodes we removed cannot be properly reinserted into the routes given the order in which we go through them, in that case we don't want to consider this a good solution
         if best_pos == None:
             cp_state.fake_vehicle_customers.add(unassigned)
         else:
+            if len(cars) > 3:
+                #don't always choose the best solution
+                costs = np.array(costs)
+                cars = np.array(cars)
+                positions = np.array(positions)
+                sorted_indices = np.argsort(costs)
+                cars_sorted = cars[sorted_indices]
+                positions_sorted = positions[sorted_indices]
+                best_car_idx = rnd_state.choice(len(cars)//2, 1, replace=False)[0]
+                best_car = cars_sorted[best_car_idx]
+                best_pos = positions_sorted[best_car_idx]
             cp_state.vehicle_to_route[best_car].insert(best_pos, unassigned) #python insert displaces the item in that current position and pushes everything back
             cp_state.vehicle_to_capacity[best_car] -= cp_state.customer_demand[unassigned]
     return cp_state
 
-def reorder_everything(state : VRPState, rnd_state, **kwargs):
+def random_fake_veh_insertion(state: VRPState, rnd_state, **kwargs):
     cp_state = cp.deepcopy(state)
-    for car, route in state.vehicle_to_route.items():
-        cp_state.vehicle_to_route[car] = set(route)
+    cp_state = cp.deepcopy(state)
+    cp_state.unassigned_customers.clear()
+    cp_state.fake_vehicle_customers.clear()
+    total_unassigned = set()
+    for c in state.unassigned_customers:
+        total_unassigned.add(c)
+    for c in state.fake_vehicle_customers:
+        total_unassigned.add(c)
+    for c in total_unassigned:
+        r = rnd_state.choice(len(cp_state.vehicle_to_route), 1, replace = False)[0]
+        if cp_state.vehicle_to_capacity[r] < cp_state.customer_demand[c]:
+            continue
+        route = cp_state.vehicle_to_route[r]
+        if len(route) == 0:
+            cp_state.fake_vehicle_customers.add(c)
+            continue
+        insertion_pos = rnd_state.choice(len(route), 1, replace = False)[0]
+        cp_state.vehicle_to_route[r].insert(insertion_pos, c)
     return cp_state
 
-def greedy_each(state: VRPState, rnd_state, **kwargs):
+
+#greedily repairs an entire route
+def reorder_one(state : VRPState, rnd_state, **kwargs):
+    cp_state = cp.deepcopy(state)
+    cp_state.unassigned_customers.clear()
+    cp_state.removed_customers.clear()
+    # for car, route in state.vehicle_to_route.items():
+    car = rnd_state.choice(np.arange(len(state.vehicle_to_route)), 1, replace=False)[0]
+    route = state.vehicle_to_route[car]
+    cp_state.vehicle_to_route[car] = set(route)
+
+    return cp_state
+
+def greedy_repair(state: VRPState, rnd_state, **kwargs):
     cp_state = cp.deepcopy(state)
 
-    def find_closest_customer(car_x, car_y, customers):
+    def find_closest_customer(veh_idx, customers):
         closest_customer = None
         closest_dist = float('inf')
         for c in customers:
-            dist = math.sqrt((state.customer_x[c] - car_x) ** 2 + (state.customer_y[c]- car_y)**2)
+            dist = get_distance_between(state, c, veh_idx)
             if dist < closest_dist:
                 closest_dist = dist
                 closest_customer = c
         return closest_customer
         
-    for car, route in state.vehicle_to_route.items():
-        unserved_customers = cp.deepcopy(route)
+    for car, route in state.vehicle_to_route.items(): #this would only happen once
+        if type(route) is not set:
+            continue
+        unserved_customers = route
         new_ordering = []
-        cx = state.customer_x[0]
-        cy = state.customer_y[0]
+        veh_idx = 0
         while len(unserved_customers) > 0:
-            new_customer = find_closest_customer(cx, cy, unserved_customers)
+            new_customer = find_closest_customer(veh_idx, unserved_customers)
             unserved_customers.remove(new_customer)
             new_ordering.append(new_customer)
-            cx = state.customer_x[new_customer]
-            cy = state.customer_y[new_customer]
+            veh_idx = new_customer
         cp_state.vehicle_to_route[car] = new_ordering
     return cp_state
 
+#switches two customers
+def relocate_customer_destroy(state: VRPState, rnd_state, **kwargs):
+    cp_state = cp.deepcopy(state)
+    cp_state.unassigned_customers.clear()
+    cp_state.removed_customers.clear()
+    routes = rnd_state.choice(len(state.vehicle_to_route), 2, replace = False)
+    r1 = cp_state.vehicle_to_route[routes[0]]
+    r2 = cp_state.vehicle_to_route[routes[1]]
+    if len(r1) == 0 or len(r2) == 0:
+        return cp_state
+    customer_r1 = rnd_state.choice(r1, 1, replace=False)[0]
+    customer_r2 = rnd_state.choice(r2, 1, replace=False)[0]
+    cp_state.removed_customers[routes[0]] = (routes[1], customer_r1, r1.index(customer_r1))
+    cp_state.removed_customers[routes[1]] = (routes[0], customer_r2, r2.index(customer_r2))
+    r1.remove(customer_r1)
+    r2.remove(customer_r2)
+    cp_state.vehicle_to_capacity[routes[0]] += state.customer_demand[customer_r1]
+    cp_state.vehicle_to_capacity[routes[1]] += state.customer_demand[customer_r2]
+    return cp_state
 
+def relocate_customer_repair(state: VRPState, rnd_state, **kwargs):
+    cp_state = cp.deepcopy(state)
+    cp_state.removed_customers.clear()
+    for orig_route, new in state.removed_customers.items():
+        cp_state.vehicle_to_route[new[0]].insert(new[2], new[1])
+        cp_state.vehicle_to_capacity[new[0]] -= state.customer_demand[new[1]]
+    return cp_state
+
+
+#switches with cloest neighbor
+def relocate_neighbor_one(state: VRPState, rnd_state, **kwargs):
+    cp_state = cp.deepcopy(state)
+    cp_state.unassigned_customers.clear()
+    cp_state.removed_customers.clear()
+    route_idx = rnd_state.choice(len(state.vehicle_to_route), 1, replace = False)[0]
+    route = cp_state.vehicle_to_route[route_idx]
+    if len(route) == 0:
+        return cp_state
+    to_swap = rnd_state.choice(route,1,replace=False)[0]
+    to_swap_idx = route.index(to_swap)
+
+    
+    sorted_distances_indices = np.argsort(state.customers_distances[to_swap])
+    idx = 0
+    closest = sorted_distances_indices[idx]
+    while (closest in state.fake_vehicle_customers or cp_state.find_route(closest)[0] == route_idx) :
+        idx += 1
+        closest = sorted_distances_indices[idx]
+
+    if closest in state.fake_vehicle_customers:
+        return cp_state
+    other_route_idx, other_route = cp_state.find_route(closest)
+    closest_idx = other_route.index(closest)
+    other_route.remove(closest)
+    route.remove(to_swap)
+
+    cp_state.removed_customers[route_idx] = (other_route_idx,  to_swap, closest_idx)
+    cp_state.vehicle_to_capacity[route_idx] += state.customer_demand[to_swap]
+    cp_state.removed_customers[other_route_idx,] = (route_idx,  closest, to_swap_idx)
+    cp_state.vehicle_to_capacity[other_route_idx] += state.customer_demand[closest]
+    return cp_state
+    
+def construct_distances_bw_customers(state : VRPState):
+    ans = []
+    for i in range(0,state.num_customers):
+        dists = []
+        for j in range(0,state.num_customers):
+            if i == 0 or j == 0:
+                dists.append(float('inf'))
+            elif i == j:
+                dists.append(float('inf'))
+            else:
+                dists.append(get_distance_between(state, i,j))
+        ans.append(dists)
+    return ans
 
 def begin_search(vrp_instance):
     seed = np.random.randint(1,1000000)
 
+    #THESE ARE PARAMETERS WE CAN PROBABLY PLAY WITH
     #acceptance thingy, as we go down we only allow a lower "worse" than current solution
     epsilons = [0.2, 0.1, 0.05] 
-    accept_probs = [0.95, 0.75, 0.5] #probability we accept a solution at most epsilon percentage worse than current best
+    accept_probs = [0.75, 0.6, 0.25] #probability we accept a solution at most epsilon percentage worse than current best
     initial_veh_to_customer, initial_num_vehicles, vehicle_to_capacity, unassigned = vrp_instance.construct_intial_solution()
     initial_state = VRPState(vrp_instance, initial_veh_to_customer, initial_num_vehicles,vehicle_to_capacity )
     #the initial solution might not have used up all cars
-    initial_state.num_vehicles = len(initial_state.vehicle_to_route)
+    initial_state.num_vehicles = 0
+    initial_state.customers_distances = construct_distances_bw_customers(initial_state)
+
+    for v,r in initial_veh_to_customer.items():
+        if len(r) > 0:
+            initial_state.num_vehicles +=1
     initial_state.fake_vehicle_customers = unassigned
     curr_state = initial_state
+    destroy_operators = [random_removal, two_opt_destroy, switch_across_routes, reorder_one, relocate_customer_destroy, relocate_neighbor_one]
+    repair_operators = [best_global_repair, two_opt_repair, insert_across_routes, greedy_repair, relocate_customer_repair]
+
     for i in range(len(epsilons)):
         epsilon = epsilons[i]
         accept_prob = accept_probs[i]
         alns = ALNS(np.random.RandomState(seed))
-        #add destroy and repair operators
-        destroy_num = 4
-        repair_num = 4
-        alns.add_destroy_operator(random_removal)
-        alns.add_destroy_operator(switch_remove)
-        alns.add_destroy_operator(switch_across_routes)
-        alns.add_destroy_operator(reorder_everything)
-        # alns.add_destroy_operator(switch_across_routes_one)
-        # alns.add_destroy_operator(remove_furthest_out)
+        # destroy_operators = destroy_list[i]
+        # repair_operators = repair_list[i]
+        
+        destroy_num = len(destroy_operators)
+        for d in destroy_operators:
+            alns.add_destroy_operator(d)
 
-        alns.add_repair_operator(best_global_repair)
-        alns.add_repair_operator(switch_repair)
-        alns.add_repair_operator(insert_across_routes)
-        alns.add_repair_operator(greedy_each)
-        # alns.add_repair_operator(insert_across_routes_one)
+        repair_num = len(repair_operators)
+        for r in repair_operators:
+            alns.add_repair_operator(r)
+
         #initial temperatures can be autofitted such that the frist solution has a 50% chance of being acceted?
-        max_iterations = 100000
+        max_iterations = 10000000
         op_coupling = np.zeros((destroy_num, repair_num))
         for i in range(destroy_num):
             for j in range(repair_num):
                 if i == j:
                     op_coupling[i,j] = True
-                # elif i == (destroy_num - 1 )and j == 0:
-                #     op_coupling[i,j] = True
+                elif j == (repair_num - 1) and i ==(destroy_num -1):
+                    op_coupling[i,j] = True
                 else:
                     op_coupling[i,j] = False
-        # select = RouletteWheel([25, 15, 5, 0], 0.8, destroy_num, repair_num, op_coupling)
-        select =  MABSelector([25,15,5,0], destroy_num, repair_num, learning_policy = LearningPolicy.EpsilonGreedy(epsilon=0.2),op_coupling = op_coupling)
+
+        # select = RouletteWheel([25, 15, 5, 0], 0.6, destroy_num, repair_num, op_coupling)
+        select =  MABSelector([25,15,5,0], destroy_num, repair_num, learning_policy = LearningPolicy.EpsilonGreedy(0.15),op_coupling = op_coupling)
         accept = SimulatedAnnealing.autofit(curr_state.objective(), epsilon, accept_prob, max_iterations, method = 'exponential')
         # stop = MaxRuntime(100) 
         stop = NoImprovement(1000)
         result = alns.iterate(initial_state, select, accept, stop)
 
-        counts = result.statistics.repair_operator_counts
+        counts = result.statistics.destroy_operator_counts
         # Iterate over the repair operator counts
         for operator, outcome_counts in counts.items():
             print(f"Operator: {operator}")
