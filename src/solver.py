@@ -39,6 +39,7 @@ class VRPState:
         self.unassigned_customers = [] #this is used for global destroy and repair operators
         self.removed_customers = {} #used for local operatores, where you still want to keep them in the same route
         self.customers_distances = None
+        self.customers_indices = None
 
     def copy(self):
         pass
@@ -147,12 +148,11 @@ def switch_across_routes(state : VRPState, rnd_state, **kwargs): #switches segme
     to_swap = rnd_state.choice(route,1,replace=False)[0]
     to_swap_idx = route.index(to_swap)
 
-    sorted_distances_indices = np.argsort(state.customers_distances[to_swap])
     idx = 0
-    closest = sorted_distances_indices[idx]
+    closest = state.customers_indices[to_swap][idx]
     while (closest in state.fake_vehicle_customers or cp_state.find_route(closest)[0] == route_idx):
         idx += 1
-        closest = sorted_distances_indices[idx]
+        closest = state.customers_indices[to_swap][idx]
     if closest in state.fake_vehicle_customers:
         return cp_state
     alt_route_idx, alt_route = state.find_route(closest)
@@ -378,12 +378,11 @@ def relocate_neighbor_one(state: VRPState, rnd_state, **kwargs):
     to_swap_idx = route.index(to_swap)
 
     
-    sorted_distances_indices = np.argsort(state.customers_distances[to_swap])
     idx = 0
-    closest = sorted_distances_indices[idx]
+    closest = state.customers_indices[to_swap][idx]
     while (closest in state.fake_vehicle_customers or cp_state.find_route(closest)[0] == route_idx) :
         idx += 1
-        closest = sorted_distances_indices[idx]
+        closest = state.customers_indices[to_swap][idx]
 
     if closest in state.fake_vehicle_customers:
         return cp_state
@@ -400,6 +399,7 @@ def relocate_neighbor_one(state: VRPState, rnd_state, **kwargs):
     
 def construct_distances_bw_customers(state : VRPState):
     ans = []
+    indices = []
     for i in range(0,state.num_customers):
         dists = []
         for j in range(0,state.num_customers):
@@ -409,8 +409,10 @@ def construct_distances_bw_customers(state : VRPState):
                 dists.append(float('inf'))
             else:
                 dists.append(get_distance_between(state, i,j))
+        indices.append(np.argsort(dists))
+        dists.sort()
         ans.append(dists)
-    return ans
+    return ans, indices
 
 def begin_search(vrp_instance):
     seed = np.random.randint(1,1000000)
@@ -423,7 +425,9 @@ def begin_search(vrp_instance):
     initial_state = VRPState(vrp_instance, initial_veh_to_customer, initial_num_vehicles,vehicle_to_capacity )
     #the initial solution might not have used up all cars
     initial_state.num_vehicles = 0
-    initial_state.customers_distances = construct_distances_bw_customers(initial_state)
+    dists, indices = construct_distances_bw_customers(initial_state)
+    initial_state.customers_distances = dists
+    initial_state.customers_indices = indices
 
     for v,r in initial_veh_to_customer.items():
         if len(r) > 0:
@@ -433,6 +437,7 @@ def begin_search(vrp_instance):
     destroy_operators = [random_removal, two_opt_destroy, switch_across_routes, reorder_one, relocate_customer_destroy, relocate_neighbor_one]
     repair_operators = [best_global_repair, two_opt_repair, insert_across_routes, greedy_repair, relocate_customer_repair]
 
+    print(curr_state.objective())
     for i in range(len(epsilons)):
         epsilon = epsilons[i]
         accept_prob = accept_probs[i]
@@ -461,7 +466,7 @@ def begin_search(vrp_instance):
                     op_coupling[i,j] = False
 
         # select = RouletteWheel([25, 15, 5, 0], 0.6, destroy_num, repair_num, op_coupling)
-        select =  MABSelector([25,15,5,0], destroy_num, repair_num, learning_policy = LearningPolicy.EpsilonGreedy(0.15),op_coupling = op_coupling)
+        select =  MABSelector([25,15,5,0], destroy_num, repair_num, learning_policy = LearningPolicy.EpsilonGreedy(0.2),op_coupling = op_coupling)
         accept = SimulatedAnnealing.autofit(curr_state.objective(), epsilon, accept_prob, max_iterations, method = 'exponential')
         # stop = MaxRuntime(100) 
         stop = NoImprovement(1000)
