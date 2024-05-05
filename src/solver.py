@@ -437,7 +437,7 @@ def begin_search(vrp_instance):
     destroy_operators = [random_removal, two_opt_destroy, switch_across_routes, reorder_one, relocate_customer_destroy, relocate_neighbor_one]
     repair_operators = [best_global_repair, two_opt_repair, insert_across_routes, greedy_repair, relocate_customer_repair]
 
-    print(curr_state.objective())
+    print("after clarke-wright we have: " + str(curr_state.objective()))
     for i in range(len(epsilons)):
         epsilon = epsilons[i]
         accept_prob = accept_probs[i]
@@ -454,7 +454,7 @@ def begin_search(vrp_instance):
             alns.add_repair_operator(r)
 
         #initial temperatures can be autofitted such that the frist solution has a 50% chance of being acceted?
-        max_iterations = 10000000
+        max_iterations = 5000000
         op_coupling = np.zeros((destroy_num, repair_num))
         for i in range(destroy_num):
             for j in range(repair_num):
@@ -469,7 +469,7 @@ def begin_search(vrp_instance):
         select =  MABSelector([25,15,5,0], destroy_num, repair_num, learning_policy = LearningPolicy.EpsilonGreedy(0.2),op_coupling = op_coupling)
         accept = SimulatedAnnealing.autofit(curr_state.objective(), epsilon, accept_prob, max_iterations, method = 'exponential')
         # stop = MaxRuntime(100) 
-        stop = NoImprovement(1000)
+        stop = NoImprovement(500)
         result = alns.iterate(initial_state, select, accept, stop)
 
         counts = result.statistics.destroy_operator_counts

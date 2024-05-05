@@ -36,6 +36,15 @@ class VRPInstance:
 
     def get_distance_between(self, i,j):
         return math.sqrt((self.xCoordOfCustomer[i] - self.xCoordOfCustomer[j])**2 + (self.yCoordOfCustomer[i] - self.yCoordOfCustomer[j])**2) #getting back to the lot
+
+    def get_smallest_customer(self,unserved, position, capacity):
+        smallest = None
+        smallest_d = None
+        for c in unserved:
+            if capacity >= self.demandOfCustomer[c] and self.demandOfCustomer[c] < smallest_d:
+                    smallest = c
+                    smallest_d = self.demandOfCustomer[c]
+        return smallest
     
     def construct_intial_solution(self):
         unserved_customers = set()
@@ -157,6 +166,32 @@ class VRPInstance:
             vehicle_to_customers[idx] = r
             vehicle_to_capacity[idx] = cap_copy[v]
             idx += 1
+        
+        
+        #what cannot be down smartly will be done greedily
+        demands = {}
+        for c in unserved_customers:
+            demands[c] = self.demandOfCustomer[c]
+        ordered_unserved = dict(sorted(demands.items(), key=lambda x: x[1], reverse = True))
+        ordered_unserved = list(ordered_unserved.keys())
+        #as long as there are unassigned and we have more cars that have not been used yet
+        while (len(ordered_unserved) > 0 and len(vehicle_to_customers) < self.num_vehicles):
+            vehicle_to_customers[idx] = []
+            vehicle_to_capacity[idx] = self.vehicle_capacity
+            c = ordered_unserved.pop(0)
+            cap = self.vehicle_capacity
+            #while the car can still serve the next customer
+            while (c is not None and len(ordered_unserved) > 0 and self.demandOfCustomer[c] < cap):
+                unserved_customers.remove(c)
+                vehicle_to_customers[idx].append(c)
+                vehicle_to_capacity[idx] -= self.demandOfCustomer[c]
+                cap -= self.demandOfCustomer[c]
+                #assuming these leftover customers have  large demand, we try to find the smallest customer it can serve
+                c = self.get_smallest_customer(ordered_unserved,c,cap)
+            idx += 1
+        print(ordered_unserved)
+        for el in ordered_unserved:
+            print(self.demandOfCustomer[el])
         return vehicle_to_customers, self.num_vehicles, vehicle_to_capacity, unserved_customers
 
 

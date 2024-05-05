@@ -43,10 +43,10 @@ def main():
           ", \"Result\": " + "{:.2f}".format(res.objective()) +
           ", \"Solution\": " + sol + "}")
     
-    new_file_name = file_name + ".sol"
+    new_file_name = "solutions/" + file_name + ".sol"
     if os.path.exists(new_file_name):
         os.remove(new_file_name)
-    with open(file_name + ".sol", "w") as file:
+    with open(new_file_name, "w") as file:
         file.write("{:.2f}".format(res.objective()))
         file.write("\n")
         for car, route in res.vehicle_to_route.items():
@@ -65,7 +65,6 @@ def main():
                 sol+= "0"
             sol += "\n"
             file.write(sol)
-    print("here")
 
 if __name__ == "__main__":
     main()
