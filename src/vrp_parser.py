@@ -39,7 +39,7 @@ class VRPInstance:
 
     def get_smallest_customer(self,unserved, position, capacity):
         smallest = None
-        smallest_d = None
+        smallest_d = float('inf')
         for c in unserved:
             if capacity >= self.demandOfCustomer[c] and self.demandOfCustomer[c] < smallest_d:
                     smallest = c
@@ -73,12 +73,11 @@ class VRPInstance:
             costs.append(2 * self.get_distance_between( c,0))
         savings = {}
         for i in range(1, self.num_customers):
-            for j in range(1, self.num_customers):
+            for j in range(i, self.num_customers):
                 if i == j:
                     continue
                 savings[(i,j)] = self.get_distance_between(i,0) + self.get_distance_between(j,0) - self.get_distance_between(i,j)
-        
-        sorted_savings = dict(sorted(savings.items(), key=lambda x: x[1], reverse=True))
+        sorted_savings = dict(sorted(savings.items(), key=lambda x: (x[1], self.demandOfCustomer[x[0][0]] + self.demandOfCustomer[x[0][1]] ), reverse=True))
         for pair, v in sorted_savings.items():
             i = pair[0]
             j = pair[1]
@@ -167,8 +166,8 @@ class VRPInstance:
             vehicle_to_capacity[idx] = cap_copy[v]
             idx += 1
         
-        
         #what cannot be down smartly will be done greedily
+        print(unserved_customers)
         demands = {}
         for c in unserved_customers:
             demands[c] = self.demandOfCustomer[c]
@@ -178,16 +177,18 @@ class VRPInstance:
         while (len(ordered_unserved) > 0 and len(vehicle_to_customers) < self.num_vehicles):
             vehicle_to_customers[idx] = []
             vehicle_to_capacity[idx] = self.vehicle_capacity
-            c = ordered_unserved.pop(0)
+            c = ordered_unserved[0]
             cap = self.vehicle_capacity
             #while the car can still serve the next customer
             while (c is not None and len(ordered_unserved) > 0 and self.demandOfCustomer[c] < cap):
                 unserved_customers.remove(c)
+                ordered_unserved.remove(c)
                 vehicle_to_customers[idx].append(c)
                 vehicle_to_capacity[idx] -= self.demandOfCustomer[c]
                 cap -= self.demandOfCustomer[c]
                 #assuming these leftover customers have  large demand, we try to find the smallest customer it can serve
                 c = self.get_smallest_customer(ordered_unserved,c,cap)
+                
             idx += 1
         print(ordered_unserved)
         for el in ordered_unserved:

@@ -35,7 +35,6 @@ class VRPState:
         self.num_vehicles = num_vehicles
         self.vehicle_to_route = vehicles_to_route
         self.vehicle_to_capacity = vehicle_to_capacity 
-        self.fake_vehicle_customers = set() #hold customers who cannot be added back to the routes after they were removed
         self.unassigned_customers = [] #this is used for global destroy and repair operators
         self.removed_customers = {} #used for local operatores, where you still want to keep them in the same route
         self.customers_distances = None
@@ -83,7 +82,7 @@ class VRPState:
         cost += distance
 
         # we don't inmediately return infinite here since we believe that routes with fewer customers in the fake vehicle are closer to the true solution
-        cost += len(self.fake_vehicle_customers) * 100000
+        cost += len(self.vehicle_to_route[self.num_vehicles]) * 100000
         # print(cost)
         return cost
         
@@ -113,8 +112,8 @@ def two_opt_destroy(state : VRPState, rnd_state, **kwargs):#this switch is withi
     cp_state = cp.deepcopy(state)
     cp_state.unassigned_customers.clear()
     cp_state.removed_customers.clear()
-    # for car,route in state.vehicle_to_route.items(): only do it for one
-    route_idx = rnd_state.choice(len(state.vehicle_to_route.values()), 1, replace=False)[0]
+    # skip the last route which is the ghost one
+    route_idx = rnd_state.choice(len(state.vehicle_to_route)-1, 1, replace=False)[0]
     route = state.vehicle_to_route[route_idx]
     if (len(route) <= 3):
         return cp_state
@@ -139,7 +138,7 @@ def two_opt_repair(state: VRPState, rnd_state, **kwargs): #this is like best loc
 #this is for blocks of customers (a segment) to a close neighboring cluster
 def switch_across_routes(state : VRPState, rnd_state, **kwargs): #switches segments across routes
     cp_state = cp.deepcopy(state)
-    route_idx = list(rnd_state.choice(len(state.vehicle_to_route), 1, replace = False))[0]
+    route_idx = list(rnd_state.choice(len(state.vehicle_to_route)-1, 1, replace = False))[0]
     cp_state.unassigned_customers.clear()
     cp_state.removed_customers.clear()
     route = state.vehicle_to_route[route_idx]
@@ -150,10 +149,10 @@ def switch_across_routes(state : VRPState, rnd_state, **kwargs): #switches segme
 
     idx = 0
     closest = state.customers_indices[to_swap][idx]
-    while (closest in state.fake_vehicle_customers or cp_state.find_route(closest)[0] == route_idx):
+    while (idx < state.num_customers and (closest in state.vehicle_to_route[state.num_vehicles] or cp_state.find_route(closest)[0] == route_idx)):
         idx += 1
         closest = state.customers_indices[to_swap][idx]
-    if closest in state.fake_vehicle_customers:
+    if idx == state.num_customers:
         return cp_state
     alt_route_idx, alt_route = state.find_route(closest)
     closest_idx = alt_route.index(closest)
@@ -162,8 +161,10 @@ def switch_across_routes(state : VRPState, rnd_state, **kwargs): #switches segme
     cp_state.removed_customers[route_idx] =   (to_swap_idx, alt_route[closest_idx:closest_idx + segment_length])
     cp_state.removed_customers[alt_route_idx] = (closest_idx , route[to_swap_idx:to_swap_idx + segment_length])
 
-    cp_state.vehicle_to_capacity[route_idx] += find_demand(state, route[to_swap_idx:to_swap_idx + segment_length])
-    cp_state.vehicle_to_capacity[alt_route_idx] += find_demand(state, alt_route[closest_idx:closest_idx + segment_length])
+    if route_idx < state.num_vehicles:
+        cp_state.vehicle_to_capacity[route_idx] += find_demand(state, route[to_swap_idx:to_swap_idx + segment_length])
+    if alt_route_idx < state.num_vehicles:
+        cp_state.vehicle_to_capacity[alt_route_idx] += find_demand(state, alt_route[closest_idx:closest_idx + segment_length])
 
     cp_state.vehicle_to_route[route_idx] = route[:to_swap_idx] + route[to_swap_idx + segment_length:]
     cp_state.vehicle_to_route[alt_route_idx] = alt_route[:closest_idx] + alt_route[closest_idx + segment_length:]
@@ -178,7 +179,8 @@ def insert_across_routes(state: VRPState, rnd_state, **kwargs):
     for veh, pair in segments.items():
         route = state.vehicle_to_route[veh]
         cp_state.vehicle_to_route[veh] = route[:pair[0]] + pair[1] + route[pair[0]:]
-        cp_state.vehicle_to_capacity[veh] -= find_demand(state, pair[1])
+        if veh < state.num_vehicles:
+            cp_state.vehicle_to_capacity[veh] -= find_demand(state, pair[1])
     return cp_state
 
 def find_demand(state:VRPState,route):
@@ -193,7 +195,7 @@ def random_removal(state : VRPState, rnd_state, n_remove=1):
     cp_state.unassigned_customers.clear()
     cp_state.removed_customers.clear()
     # for car, route in cp_state.vehicle_to_route.items():
-    route_idx = rnd_state.choice(len(state.vehicle_to_route), 1, replace=False)[0]
+    route_idx = rnd_state.choice(len(state.vehicle_to_route)-1, 1, replace=False)[0]
     route = cp_state.vehicle_to_route[route_idx]
     if len(route) == 0:
         return cp_state
@@ -216,11 +218,11 @@ def best_global_repair(state: VRPState, rnd_state, **kwargs):
     #check if there is a better place to insert the customer in
     cp_state = cp.deepcopy(state)
     cp_state.unassigned_customers.clear()
-    cp_state.fake_vehicle_customers.clear()
+    cp_state.vehicle_to_route[state.num_vehicles] = []
     total_unassigned = set()
     for c in state.unassigned_customers:
         total_unassigned.add(c)
-    for c in state.fake_vehicle_customers:
+    for c in state.vehicle_to_route[state.num_vehicles]:
         total_unassigned.add(c)
     for unassigned in total_unassigned:
         depot_idx = 0
@@ -229,6 +231,8 @@ def best_global_repair(state: VRPState, rnd_state, **kwargs):
         cars = []
         positions = []
         for car, route in state.vehicle_to_route.items(): 
+            if car == state.num_vehicles:
+                continue
             #if this route can service the customer
             if cp_state.vehicle_to_capacity[car] >= cp_state.customer_demand[unassigned]:
                 # cost to insert a customer at a given point in the program
@@ -257,7 +261,7 @@ def best_global_repair(state: VRPState, rnd_state, **kwargs):
                 positions.append(best_pos)
         #it might be the case that the nodes we removed cannot be properly reinserted into the routes given the order in which we go through them, in that case we don't want to consider this a good solution
         if best_pos == None:
-            cp_state.fake_vehicle_customers.add(unassigned)
+            cp_state.vehicle_to_route[state.num_vehicles].append(unassigned)
         else:
             if len(cars) > 3:
                 #don't always choose the best solution
@@ -303,7 +307,7 @@ def reorder_one(state : VRPState, rnd_state, **kwargs):
     cp_state.unassigned_customers.clear()
     cp_state.removed_customers.clear()
     # for car, route in state.vehicle_to_route.items():
-    car = rnd_state.choice(np.arange(len(state.vehicle_to_route)), 1, replace=False)[0]
+    car = rnd_state.choice(len(state.vehicle_to_route)-1, 1, replace=False)[0]
     route = state.vehicle_to_route[car]
     cp_state.vehicle_to_route[car] = set(route)
 
@@ -336,24 +340,27 @@ def greedy_repair(state: VRPState, rnd_state, **kwargs):
         cp_state.vehicle_to_route[car] = new_ordering
     return cp_state
 
-#switches two customers
+#switches two customers (one of which is always in the vehicle that does not exist)
 def relocate_customer_destroy(state: VRPState, rnd_state, **kwargs):
     cp_state = cp.deepcopy(state)
-    cp_state.unassigned_customers.clear()
-    cp_state.removed_customers.clear()
-    routes = rnd_state.choice(len(state.vehicle_to_route), 2, replace = False)
-    r1 = cp_state.vehicle_to_route[routes[0]]
-    r2 = cp_state.vehicle_to_route[routes[1]]
-    if len(r1) == 0 or len(r2) == 0:
-        return cp_state
-    customer_r1 = rnd_state.choice(r1, 1, replace=False)[0]
-    customer_r2 = rnd_state.choice(r2, 1, replace=False)[0]
-    cp_state.removed_customers[routes[0]] = (routes[1], customer_r1, r1.index(customer_r1))
-    cp_state.removed_customers[routes[1]] = (routes[0], customer_r2, r2.index(customer_r2))
-    r1.remove(customer_r1)
-    r2.remove(customer_r2)
-    cp_state.vehicle_to_capacity[routes[0]] += state.customer_demand[customer_r1]
-    cp_state.vehicle_to_capacity[routes[1]] += state.customer_demand[customer_r2]
+    # cp_state.unassigned_customers.clear()
+    # cp_state.removed_customers.clear()
+    # routes = rnd_state.choice(len(state.vehicle_to_route), 2, replace = False)
+    # # routes = np.append(routes,(len(state.vehicle_to_route)-1))
+    # r1 = cp_state.vehicle_to_route[routes[0]]
+    # r2 = cp_state.vehicle_to_route[routes[1]]
+    # if len(r1) == 0 or len(r2) == 0:
+    #     return cp_state
+    # customer_r1 = rnd_state.choice(r1, 1, replace=False)[0]
+    # customer_r2 = rnd_state.choice(r2, 1, replace=False)[0]
+    # cp_state.removed_customers[routes[0]] = (routes[1], customer_r1, r1.index(customer_r1))
+    # cp_state.removed_customers[routes[1]] = (routes[0], customer_r2, r2.index(customer_r2))
+    # r1.remove(customer_r1)
+    # r2.remove(customer_r2)
+    # if routes[0] < state.num_vehicles:
+    #     cp_state.vehicle_to_capacity[routes[0]] += state.customer_demand[customer_r1]
+    # if routes[1] < state.num_vehicles:
+    #     cp_state.vehicle_to_capacity[routes[1]] += state.customer_demand[customer_r2]
     return cp_state
 
 def relocate_customer_repair(state: VRPState, rnd_state, **kwargs):
@@ -361,7 +368,8 @@ def relocate_customer_repair(state: VRPState, rnd_state, **kwargs):
     cp_state.removed_customers.clear()
     for orig_route, new in state.removed_customers.items():
         cp_state.vehicle_to_route[new[0]].insert(new[2], new[1])
-        cp_state.vehicle_to_capacity[new[0]] -= state.customer_demand[new[1]]
+        if new[0] < state.num_vehicles:
+            cp_state.vehicle_to_capacity[new[0]] -= state.customer_demand[new[1]]
     return cp_state
 
 
@@ -370,21 +378,23 @@ def relocate_neighbor_one(state: VRPState, rnd_state, **kwargs):
     cp_state = cp.deepcopy(state)
     cp_state.unassigned_customers.clear()
     cp_state.removed_customers.clear()
+    #this route can be the one that does not exist
     route_idx = rnd_state.choice(len(state.vehicle_to_route), 1, replace = False)[0]
+    # route_idx = len(state.vehicle_to_route)-1
     route = cp_state.vehicle_to_route[route_idx]
     if len(route) == 0:
         return cp_state
     to_swap = rnd_state.choice(route,1,replace=False)[0]
     to_swap_idx = route.index(to_swap)
 
-    
     idx = 0
     closest = state.customers_indices[to_swap][idx]
-    while (closest in state.fake_vehicle_customers or cp_state.find_route(closest)[0] == route_idx) :
+    # print(state.customers_indices)
+    # print(state.customers_distances[to_swap])
+    while (idx < state.num_customers and (closest in cp_state.vehicle_to_route[state.num_vehicles]  or cp_state.find_route(closest)[0] == route_idx)):
         idx += 1
         closest = state.customers_indices[to_swap][idx]
-
-    if closest in state.fake_vehicle_customers:
+    if idx == state.num_customers:
         return cp_state
     other_route_idx, other_route = cp_state.find_route(closest)
     closest_idx = other_route.index(closest)
@@ -392,9 +402,11 @@ def relocate_neighbor_one(state: VRPState, rnd_state, **kwargs):
     route.remove(to_swap)
 
     cp_state.removed_customers[route_idx] = (other_route_idx,  to_swap, closest_idx)
-    cp_state.vehicle_to_capacity[route_idx] += state.customer_demand[to_swap]
+    if route_idx < state.num_vehicles:
+        cp_state.vehicle_to_capacity[route_idx] += state.customer_demand[to_swap]
     cp_state.removed_customers[other_route_idx,] = (route_idx,  closest, to_swap_idx)
-    cp_state.vehicle_to_capacity[other_route_idx] += state.customer_demand[closest]
+    if other_route_idx < state.num_vehicles:
+        cp_state.vehicle_to_capacity[other_route_idx] += state.customer_demand[closest]
     return cp_state
     
 def construct_distances_bw_customers(state : VRPState):
@@ -432,13 +444,13 @@ def begin_search(vrp_instance):
     for v,r in initial_veh_to_customer.items():
         if len(r) > 0:
             initial_state.num_vehicles +=1
-    initial_state.fake_vehicle_customers = unassigned
+    initial_state.vehicle_to_route[initial_state.num_vehicles] = list(unassigned)
     curr_state = initial_state
     destroy_operators = [random_removal, two_opt_destroy, switch_across_routes, reorder_one, relocate_customer_destroy, relocate_neighbor_one]
     repair_operators = [best_global_repair, two_opt_repair, insert_across_routes, greedy_repair, relocate_customer_repair]
 
-    print("after clarke-wright we have: " + str(curr_state.objective()))
     for i in range(len(epsilons)):
+        print(curr_state.objective())
         epsilon = epsilons[i]
         accept_prob = accept_probs[i]
         alns = ALNS(np.random.RandomState(seed))
@@ -468,9 +480,9 @@ def begin_search(vrp_instance):
         # select = RouletteWheel([25, 15, 5, 0], 0.6, destroy_num, repair_num, op_coupling)
         select =  MABSelector([25,15,5,0], destroy_num, repair_num, learning_policy = LearningPolicy.EpsilonGreedy(0.2),op_coupling = op_coupling)
         accept = SimulatedAnnealing.autofit(curr_state.objective(), epsilon, accept_prob, max_iterations, method = 'exponential')
-        # stop = MaxRuntime(100) 
-        stop = NoImprovement(500)
-        result = alns.iterate(initial_state, select, accept, stop)
+        # stop = MaxRuntime(98) 
+        stop = NoImprovement(1000)
+        result = alns.iterate(curr_state, select, accept, stop)
 
         counts = result.statistics.destroy_operator_counts
         # Iterate over the repair operator counts

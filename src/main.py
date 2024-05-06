@@ -25,6 +25,8 @@ def main():
     sol = ""
     #writing solution in the correct format
     for car, route in res.vehicle_to_route.items():
+        if car == len(res.vehicle_to_route)-1: #the last car
+            continue
         for i in range(len(route)):
             customer = route[i]
             if i == 0:
@@ -50,6 +52,8 @@ def main():
         file.write("{:.2f}".format(res.objective()))
         file.write("\n")
         for car, route in res.vehicle_to_route.items():
+            if car == res.num_vehicles:
+                continue
             sol = ""
             for i in range(len(route)):
                 customer = route[i]
