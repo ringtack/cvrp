@@ -67,6 +67,8 @@ class VRPInstance:
                 d += self.demandOfCustomer[c]
             return d
 
+        avg_demand = sum(self.demandOfCustomer)/self.num_customers
+        mu = 0.8
         #first let's serve all customers separately
         costs = []
         for c in range(1,self.num_customers):
@@ -76,7 +78,7 @@ class VRPInstance:
             for j in range(i, self.num_customers):
                 if i == j:
                     continue
-                savings[(i,j)] = self.get_distance_between(i,0) + self.get_distance_between(j,0) - self.get_distance_between(i,j)
+                savings[(i,j)] = self.get_distance_between(i,0) + self.get_distance_between(j,0) - self.get_distance_between(i,j) + mu * (self.demandOfCustomer[j] + self.demandOfCustomer[i])/avg_demand
         sorted_savings = dict(sorted(savings.items(), key=lambda x: (x[1], self.demandOfCustomer[x[0][0]] + self.demandOfCustomer[x[0][1]] ), reverse=True))
         for pair, v in sorted_savings.items():
             i = pair[0]
