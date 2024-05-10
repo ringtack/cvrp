@@ -4,7 +4,8 @@
 ############# CSCI 2951-O ##############
 ########################################
 
-# Update this file with instructions on how to compile your code
-
-source cvrp/bin/activate
-pip3 install -r requirements.txt
+# If activate script doesn't exist, create new venv and install requirements
+if [ ! -f cvrp/bin/activate ]; then
+  python3 -m venv cvrp
+  pip3 install -r requirements.txt
+fi

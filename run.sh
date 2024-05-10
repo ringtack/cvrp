@@ -9,8 +9,9 @@ then
 	echo "Usage: `basename $0` <input>"
 	exit $E_BADARGS
 fi
-	
+
 input=$1
 
 # run the solver
-python3.9 src/main.py $input
+source cvrp/bin/activate
+python3 src/main.py "$input"
