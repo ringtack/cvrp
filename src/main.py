@@ -26,23 +26,19 @@ def main():
     res: VRPState = begin_search(vrp_instance=instance)
     watch.stop()
 
-    sol = ""
+    sol = "0 "
     # writing solution in the correct format
     for car, route in res.vehicle_to_route.items():
         if car == len(res.vehicle_to_route) - 1:  # the last car
             continue
+        sol += "0 "
         for i in range(len(route)):
             customer = route[i]
-            if i == 0:
-                sol += "0 "
-                sol += str(customer) + " "
-            elif i == len(route) - 1:
-                sol += str(customer) + " "
-                sol += "0 "
-            else:
-                sol += str(customer) + " "
-        if len(route) == 0:
-            sol += "0 0 "
+            sol += str(customer) + " "
+        sol += "0 "
+
+    # Remove last space
+    sol = sol[:-1]
 
     print(
         '{"Instance": "'
